@@ -4,7 +4,6 @@ on:
   push:
     paths-ignore:
       - 'README.md'
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -20,15 +19,39 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: 17
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set environment
+        run: |
+          {
+            echo "group=$(grep POM_GROUP build.gradle | awk -F\" '{print $2}' | sed 's/\./\//g')"
+            echo "id=$(grep POM_ID build.gradle | awk -F\" '{print $2}')"
+            echo "version=$(grep POM_VERSION build.gradle | awk -F\" '{print $2}')"
+            echo "commit=$(echo ${{ github.sha }} | cut -c-7)"
+          } >> $GITHUB_ENV
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_SECRET }}" > secret.gpg
+          gpg --import secret.gpg
 
       - name: Build
         run: |
-          ./gradlew --no-daemon --warning-mode=all assembleRelease publishReleasePublicationToMavenLocal
-          echo "commit=$(echo ${{ github.sha }} | cut -c-7)" >> $GITHUB_ENV
+          ./gradlew --no-daemon --warning-mode=all publishToMavenLocal
+
+      - name: Packaging
+        run: |
+          cd ~/.m2/repository/${{ env.group }}/${{ env.id }}
+          rm -f maven-metadata-local.xml
+          cd ${{ env.version }}
+          find . -maxdepth 1 -not -name "*.asc" -not -name "*.md5" -not -name "*.sha1" -type f -exec sh -c 'md5sum "$1" | awk "{print \$1}" > "$1.md5"' _ {} \;
+          find . -maxdepth 1 -not -name "*.asc" -not -name "*.md5" -not -name "*.sha1" -type f -exec sh -c 'sha1sum "$1" | awk "{print \$1}" > "$1.sha1"' _ {} \;
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: DchaService@${{ env.commit }}
-          path: svc/build/outputs/aar/svc-release.aar
+          name: ${{ env.id }}-${{ env.version }}@${{ env.commit }}
+          path: ~/.m2/repository
